@@ -78,6 +78,7 @@ const Index = () => {
     polyline: [number, number][];
     stopIds: string[];
   } | null>(null);
+  const [routePlannerOpen, setRoutePlannerOpen] = useState(false);
 
   const [vehicleProfileId, setVehicleProfileId] = useState<string>('any');
   const [onlyCompatible, setOnlyCompatible] = useState(false);
@@ -392,6 +393,33 @@ const Index = () => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [cheapestPending, userLocation]);
 
+  useEffect(() => {
+    // First-open UX: default to Map section and keep Route Planner collapsed.
+    const onHash = () => {
+      try {
+        if (window.location.hash === '#route') setRoutePlannerOpen(true);
+      } catch {
+        // ignore
+      }
+    };
+
+    try {
+      if (!window.location.hash) {
+        window.location.hash = '#map';
+        window.setTimeout(() => {
+          document.querySelector('#map')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        }, 0);
+      } else {
+        onHash();
+      }
+    } catch {
+      // ignore
+    }
+
+    window.addEventListener('hashchange', onHash);
+    return () => window.removeEventListener('hashchange', onHash);
+  }, []);
+
   return (
     <>
       <Helmet>
@@ -415,28 +443,50 @@ const Index = () => {
 
           <StatsSection />
 
-          {/* Route Planner Section */}
-          <section id="route" className="py-16 px-4 bg-muted/30">
+          {/* Route Planner Section (collapsed by default) */}
+          <section id="route" className="py-10 px-4 bg-muted/30">
             <div className="container">
-              <div className="text-center mb-12">
-                <h2 className="font-display text-3xl sm:text-4xl font-bold mb-4">
-                  Route-aware charging (Κύπρος)
-                </h2>
-                <p className="text-muted-foreground max-w-2xl mx-auto">
-                  Ο EV driver δεν ψάχνει “έναν φορτιστή”—ψάχνει να φτάσει κάπου. Δες αν φτάνεις με το SOC σου, πού να
-                  φορτίσεις και για πόση ώρα.
-                </p>
+              <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between rounded-xl border bg-background p-4 shadow-soft">
+                <div>
+                  <p className="text-xs text-muted-foreground">Route planner</p>
+                  <p className="font-display font-semibold">Route-aware charging (Κύπρος)</p>
+                  <p className="text-sm text-muted-foreground max-w-2xl">
+                    Ο EV driver δεν ψάχνει “έναν φορτιστή”—ψάχνει να φτάσει κάπου. Δες αν φτάνεις με το SOC σου, πού να
+                    φορτίσεις και για πόση ώρα.
+                  </p>
+                </div>
+                <div className="flex flex-col sm:flex-row gap-2">
+                  <Button
+                    variant={routePlannerOpen ? 'outline' : 'secondary'}
+                    onClick={() => setRoutePlannerOpen((v) => !v)}
+                  >
+                    {routePlannerOpen ? 'Hide' : 'Show'}
+                  </Button>
+                  {!routePlannerOpen ? (
+                    <Button
+                      variant="secondary"
+                      onClick={() => {
+                        window.location.hash = '#map';
+                        document.querySelector('#map')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                      }}
+                    >
+                      Go to map
+                    </Button>
+                  ) : null}
+                </div>
               </div>
 
-              <div className="max-w-5xl mx-auto">
-                <RoutePlanner
-                  stations={stations}
-                  onSelectStation={(station) => setSelectedStation(station)}
-                  onApplyToMap={({ templateId, polyline, suggestedStopStationIds }) => {
-                    setRouteOverlay({ templateId, polyline, stopIds: suggestedStopStationIds });
-                  }}
-                />
-              </div>
+              {routePlannerOpen ? (
+                <div className="max-w-5xl mx-auto mt-6">
+                  <RoutePlanner
+                    stations={stations}
+                    onSelectStation={(station) => setSelectedStation(station)}
+                    onApplyToMap={({ templateId, polyline, suggestedStopStationIds }) => {
+                      setRouteOverlay({ templateId, polyline, stopIds: suggestedStopStationIds });
+                    }}
+                  />
+                </div>
+              ) : null}
             </div>
           </section>
 

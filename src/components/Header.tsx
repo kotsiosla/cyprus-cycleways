@@ -70,11 +70,11 @@ const Header = () => {
         </a>
 
         <nav className="hidden md:flex items-center gap-6">
-          <a href="#route" className="text-sm font-medium hover:text-primary transition-colors">
-            Route
-          </a>
           <a href="#map" className="text-sm font-medium hover:text-primary transition-colors">
             Map
+          </a>
+          <a href="#route" className="text-sm font-medium hover:text-primary transition-colors">
+            Route
           </a>
           <a href="#stations" className="text-sm font-medium hover:text-primary transition-colors">
             Stations
@@ -119,11 +119,11 @@ const Header = () => {
       {isMobileMenuOpen && (
         <div className="md:hidden glass mt-2 mx-4 p-4 rounded-xl animate-slide-up">
           <nav className="flex flex-col gap-3">
-            <a href="#route" className="text-sm font-medium hover:text-primary transition-colors py-2">
-              Route
-            </a>
             <a href="#map" className="text-sm font-medium hover:text-primary transition-colors py-2">
               Map
+            </a>
+            <a href="#route" className="text-sm font-medium hover:text-primary transition-colors py-2">
+              Route
             </a>
             <a href="#stations" className="text-sm font-medium hover:text-primary transition-colors py-2">
               Stations
