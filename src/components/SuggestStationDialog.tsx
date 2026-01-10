@@ -259,9 +259,16 @@ export default function SuggestStationDialog({ open, onOpenChange, coordinates }
                       }
                       setBusy(true);
                       try {
+                        const allowedTypes = new Set(["image/jpeg", "image/png", "image/webp", "image/gif"]);
+                        if (file.type && !allowedTypes.has(file.type)) {
+                          toast.error("Unsupported image format. Please upload PNG/JPG/WebP/GIF.");
+                          return;
+                        }
                         const dataUrl = await fileToDataUrl(file);
-                        if (!dataUrl.startsWith("data:image/")) {
-                          toast.error("Unsupported image format.");
+                        // Hard block SVG-in-data-URL and other non-image payloads.
+                        // (Even when rendered as <img>, SVG/data URLs can be abused in some contexts.)
+                        if (!/^data:image\/(png|jpeg|webp|gif);base64,/i.test(dataUrl)) {
+                          toast.error("Unsupported image format. Please upload PNG/JPG/WebP/GIF.");
                           return;
                         }
                         setPhotoDataUrl(dataUrl);

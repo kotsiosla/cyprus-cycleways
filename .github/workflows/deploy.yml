@@ -30,9 +30,10 @@ jobs:
           VITE_OPENCHARGEMAP_PROXY_URL: ${{ secrets.VITE_OPENCHARGEMAP_PROXY_URL }}
           # Public webhook endpoint (e.g. Formspree) used to notify admin via email.
           VITE_ADMIN_NOTIFY_ENDPOINT: ${{ secrets.VITE_ADMIN_NOTIFY_ENDPOINT }}
-      - run: node -e "const fs=require('fs');const endpoint=process.env.VITE_ADMIN_NOTIFY_ENDPOINT||'';fs.writeFileSync('dist/runtime-config.js', 'window.__APP_CONFIG__ = ' + JSON.stringify({adminNotifyEndpoint:endpoint}) + ';');"
+      - run: node -e "const fs=require('fs');const crypto=require('crypto');const endpoint=process.env.VITE_ADMIN_NOTIFY_ENDPOINT||'';const code=process.env.ADMIN_UNLOCK_CODE||'';const adminUnlockHash=code?crypto.createHash('sha256').update(code,'utf8').digest('hex'):'';fs.writeFileSync('dist/runtime-config.js','window.__APP_CONFIG__ = '+JSON.stringify({adminNotifyEndpoint:endpoint,adminUnlockHash})+';');"
         env:
           VITE_ADMIN_NOTIFY_ENDPOINT: ${{ secrets.VITE_ADMIN_NOTIFY_ENDPOINT }}
+          ADMIN_UNLOCK_CODE: ${{ secrets.ADMIN_UNLOCK_CODE }}
       - uses: actions/upload-pages-artifact@v3
         with:
           path: dist
