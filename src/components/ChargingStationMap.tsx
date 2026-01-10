@@ -587,56 +587,6 @@ export default function ChargingStationMap({
               ? "Out of service"
               : "Status unknown";
 
-    const escapeHtml = (value: string) =>
-      value
-        .split("&").join("&amp;")
-        .split("<").join("&lt;")
-        .split(">").join("&gt;")
-        .split('"').join("&quot;")
-        .split("'").join("&#39;");
-
-    const portsHtml = selectedStation.ports?.length
-      ? `<div class="text-xs mt-2">
-          <div class="font-medium mb-1">Ports</div>
-          <div style="display:flex; flex-direction:column; gap:4px;">
-            ${selectedStation.ports
-              .slice(0, 6)
-              .map((port, idx) => {
-                const parts = [
-                  `Port ${idx + 1}`,
-                  port.connectorLabel,
-                  typeof port.powerKw === "number" ? `${port.powerKw} kW` : undefined,
-                  port.availability === "available"
-                    ? "Available"
-                    : port.availability === "occupied"
-                      ? "In use"
-                      : port.availability === "out_of_service"
-                        ? "Out of service"
-                        : "Unknown"
-                ].filter(Boolean);
-                return `<div>${escapeHtml(parts.join(" · "))}</div>`;
-              })
-              .join("")}
-            ${selectedStation.ports.length > 6 ? `<div>+${selectedStation.ports.length - 6} more</div>` : ""}
-          </div>
-        </div>`
-      : "";
-
-    const userNotesHtml =
-      selectedStation.isUserSuggested && selectedStation.suggestionNotes
-        ? `<div class="text-xs mt-2">
-            <div class="font-medium mb-1">User notes</div>
-            <div style="opacity:.9;">${escapeHtml(String(selectedStation.suggestionNotes))}</div>
-          </div>`
-        : "";
-
-    const userPhotoHtml =
-      selectedStation.isUserSuggested && selectedStation.suggestionPhotoDataUrl
-        ? `<div class="text-xs mt-2">
-            <img src="${selectedStation.suggestionPhotoDataUrl}" alt="User photo" style="width:100%; max-height:140px; object-fit:cover; border-radius:10px; border:1px solid rgba(148,163,184,0.6);" />
-          </div>`
-        : "";
-
     const directionsUrl = (() => {
       const [lon, lat] = selectedStation.coordinates;
       const params = new URLSearchParams({
@@ -650,70 +600,151 @@ export default function ChargingStationMap({
       return `https://www.google.com/maps/dir/?${params.toString()}`;
     })();
 
-    const directionsHtml = `<div class="text-xs mt-2">
-      <a
-        href="${escapeHtml(directionsUrl)}"
-        target="_blank"
-        rel="noopener noreferrer"
-        style="display:inline-block; padding:6px 10px; border-radius:8px; border:1px solid rgba(148,163,184,0.6); text-decoration:none;"
-      >Directions</a>
-    </div>`;
-
-    const ocmHtml = selectedStation.ocm
-      ? `<div class="text-xs mt-2">
-          <div class="font-medium mb-1">Related information</div>
-          <div style="display:flex; flex-direction:column; gap:4px;">
-            ${
-              selectedStation.ocm.usageType || selectedStation.ocm.isMembershipRequired !== undefined
-                ? `<div>${escapeHtml(
-                    `${selectedStation.ocm.usageType ?? "Access"}${
-                      selectedStation.ocm.isMembershipRequired ? " · Membership required" : ""
-                    }`
-                  )}</div>`
-                : ""
-            }
-            ${selectedStation.ocm.openingTimes ? `<div>Opening hours: ${escapeHtml(selectedStation.ocm.openingTimes)}</div>` : ""}
-            ${
-              selectedStation.ocm.usageCost
-                ? `<div>Cost: ${escapeHtml(selectedStation.ocm.usageCost)}</div>`
-                : ""
-            }
-            <div>Data: OpenChargeMap (CC BY 4.0)</div>
-          </div>
-        </div>`
-      : "";
-
     popupRef.current?.remove();
+    const container = document.createElement("div");
+    container.style.maxWidth = "260px";
+
+    const addLine = (text: string, className?: string) => {
+      const div = document.createElement("div");
+      if (className) div.className = className;
+      div.textContent = text;
+      container.appendChild(div);
+      return div;
+    };
+
+    const addSection = (title: string) => {
+      const wrap = document.createElement("div");
+      wrap.className = "text-xs mt-2";
+      const h = document.createElement("div");
+      h.className = "font-medium mb-1";
+      h.textContent = title;
+      wrap.appendChild(h);
+      container.appendChild(wrap);
+      return wrap;
+    };
+
+    addLine(selectedStation.name, "text-sm font-semibold");
+    if (selectedStation.osmName) addLine(`OSM: ${selectedStation.osmName}`, "text-xs text-muted-foreground");
+    if (selectedStation.placeToPlugName) addLine(`PlaceToPlug: ${selectedStation.placeToPlugName}`, "text-xs text-muted-foreground");
+    if (selectedStation.ocmName) addLine(`OpenChargeMap: ${selectedStation.ocmName}`, "text-xs text-muted-foreground");
+    if (selectedStation.address) addLine(selectedStation.address, "text-xs text-muted-foreground");
+    addLine(availabilityLabel, "text-xs mt-1");
+
+    // Directions link (safe DOM creation; no HTML interpolation)
+    {
+      const wrap = document.createElement("div");
+      wrap.className = "text-xs mt-2";
+      const a = document.createElement("a");
+      a.textContent = "Directions";
+      a.href = directionsUrl;
+      a.target = "_blank";
+      a.rel = "noopener noreferrer";
+      a.style.display = "inline-block";
+      a.style.padding = "6px 10px";
+      a.style.borderRadius = "8px";
+      a.style.border = "1px solid rgba(148,163,184,0.6)";
+      a.style.textDecoration = "none";
+      wrap.appendChild(a);
+      container.appendChild(wrap);
+    }
+
+    if (selectedStation.ports?.length) {
+      const section = addSection("Ports");
+      const list = document.createElement("div");
+      list.style.display = "flex";
+      list.style.flexDirection = "column";
+      list.style.gap = "4px";
+      selectedStation.ports.slice(0, 6).forEach((port, idx) => {
+        const parts = [
+          `Port ${idx + 1}`,
+          port.connectorLabel,
+          typeof port.powerKw === "number" ? `${port.powerKw} kW` : undefined,
+          port.availability === "available"
+            ? "Available"
+            : port.availability === "occupied"
+              ? "In use"
+              : port.availability === "out_of_service"
+                ? "Out of service"
+                : "Unknown"
+        ].filter(Boolean) as string[];
+        const row = document.createElement("div");
+        row.textContent = parts.join(" · ");
+        list.appendChild(row);
+      });
+      if (selectedStation.ports.length > 6) {
+        const more = document.createElement("div");
+        more.textContent = `+${selectedStation.ports.length - 6} more`;
+        list.appendChild(more);
+      }
+      section.appendChild(list);
+    }
+
+    if (selectedStation.isUserSuggested && selectedStation.suggestionNotes) {
+      const section = addSection("User notes");
+      const div = document.createElement("div");
+      div.style.opacity = "0.9";
+      div.textContent = String(selectedStation.suggestionNotes);
+      section.appendChild(div);
+    }
+
+    if (selectedStation.isUserSuggested && selectedStation.suggestionPhotoDataUrl) {
+      const value = String(selectedStation.suggestionPhotoDataUrl);
+      const isSafeDataUrl =
+        /^data:image\/(png|jpeg|webp|gif);base64,[a-z0-9+/=]+$/i.test(value) && value.length <= 2_500_000;
+      if (isSafeDataUrl) {
+        const wrap = document.createElement("div");
+        wrap.className = "text-xs mt-2";
+        const img = document.createElement("img");
+        img.src = value;
+        img.alt = "User photo";
+        img.style.width = "100%";
+        img.style.maxHeight = "140px";
+        img.style.objectFit = "cover";
+        img.style.borderRadius = "10px";
+        img.style.border = "1px solid rgba(148,163,184,0.6)";
+        wrap.appendChild(img);
+        container.appendChild(wrap);
+      }
+    }
+
+    if (selectedStation.ocm) {
+      const section = addSection("Related information");
+      const list = document.createElement("div");
+      list.style.display = "flex";
+      list.style.flexDirection = "column";
+      list.style.gap = "4px";
+      if (selectedStation.ocm.usageType || selectedStation.ocm.isMembershipRequired !== undefined) {
+        const div = document.createElement("div");
+        div.textContent = `${selectedStation.ocm.usageType ?? "Access"}${
+          selectedStation.ocm.isMembershipRequired ? " · Membership required" : ""
+        }`;
+        list.appendChild(div);
+      }
+      if (selectedStation.ocm.openingTimes) {
+        const div = document.createElement("div");
+        div.textContent = `Opening hours: ${selectedStation.ocm.openingTimes}`;
+        list.appendChild(div);
+      }
+      if (selectedStation.ocm.usageCost) {
+        const div = document.createElement("div");
+        div.textContent = `Cost: ${selectedStation.ocm.usageCost}`;
+        list.appendChild(div);
+      }
+      {
+        const div = document.createElement("div");
+        div.textContent = "Data: OpenChargeMap (CC BY 4.0)";
+        list.appendChild(div);
+      }
+      section.appendChild(list);
+    }
+
+    if (selectedStation.openingHours) {
+      addLine(selectedStation.openingHours, "text-xs text-muted-foreground");
+    }
+
     popupRef.current = new maplibregl.Popup({ offset: 20 })
       .setLngLat(selectedStation.coordinates)
-      .setHTML(
-        `<div class="text-sm font-semibold">${escapeHtml(selectedStation.name)}</div>` +
-          (selectedStation.osmName
-            ? `<div class="text-xs text-muted-foreground">OSM: ${escapeHtml(selectedStation.osmName)}</div>`
-            : "") +
-          (selectedStation.placeToPlugName
-            ? `<div class="text-xs text-muted-foreground">PlaceToPlug: ${escapeHtml(
-                selectedStation.placeToPlugName
-              )}</div>`
-            : "") +
-          (selectedStation.ocmName
-            ? `<div class="text-xs text-muted-foreground">OpenChargeMap: ${escapeHtml(
-                selectedStation.ocmName
-              )}</div>`
-            : "") +
-          (selectedStation.address
-            ? `<div class="text-xs text-muted-foreground">${selectedStation.address}</div>`
-            : "") +
-          `<div class="text-xs mt-1">${availabilityLabel}</div>` +
-          directionsHtml +
-          portsHtml +
-          userNotesHtml +
-          userPhotoHtml +
-          ocmHtml +
-          (selectedStation.openingHours
-            ? `<div class="text-xs text-muted-foreground">${escapeHtml(selectedStation.openingHours)}</div>`
-            : "")
-      )
+      .setDOMContent(container)
       .addTo(map);
   }, [selectedStation, showStations, showUserStations, userLocation]);
 

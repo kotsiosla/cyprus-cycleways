@@ -20,6 +20,7 @@ import {
   type StationSuggestion
 } from '@/lib/userSuggestions';
 import { buildGlobalUserStationsFile, fetchGlobalApprovedSuggestions } from '@/lib/globalUserStations';
+import { getRuntimeConfig } from '@/lib/runtimeConfig';
 import { toast } from '@/components/ui/sonner';
 import { Helmet } from 'react-helmet-async';
 import { BatteryCharging, Heart, MapPin, Navigation } from 'lucide-react';
@@ -38,6 +39,15 @@ const uniqBy = <T,>(items: T[], key: (item: T) => string) => {
     out.push(item);
   }
   return out;
+};
+
+const suggestionKey = (s: StationSuggestion) => {
+  const name = (s.name ?? '').trim().toLowerCase();
+  const lon = Number(s.coordinates?.[0]);
+  const lat = Number(s.coordinates?.[1]);
+  const lonKey = Number.isFinite(lon) ? lon.toFixed(6) : '0';
+  const latKey = Number.isFinite(lat) ? lat.toFixed(6) : '0';
+  return `${name}|${lonKey}|${latKey}`;
 };
 
 const downloadTextFile = (filename: string, text: string) => {
@@ -89,14 +99,13 @@ const Index = () => {
   const [pendingSuggestions, setPendingSuggestions] = useState<StationSuggestion[]>([]);
   const [approvedSuggestions, setApprovedSuggestions] = useState<StationSuggestion[]>([]);
   const [globalApprovedSuggestions, setGlobalApprovedSuggestions] = useState<StationSuggestion[]>([]);
-
-  const isAdmin = useMemo(() => {
-    try {
-      return new URLSearchParams(window.location.search).get('admin') === '1';
-    } catch {
-      return false;
-    }
+  const adminUnlockHash = useMemo(() => {
+    return (getRuntimeConfig().adminUnlockHash ?? '').trim().toLowerCase();
   }, []);
+  const [adminUnlocked, setAdminUnlocked] = useState(false);
+  const [adminUnlockCode, setAdminUnlockCode] = useState('');
+  const [adminUnlockBusy, setAdminUnlockBusy] = useState(false);
+  const [adminUnlockError, setAdminUnlockError] = useState<string | null>(null);
 
   useEffect(() => {
     const loadStations = async () => {
@@ -119,6 +128,46 @@ const Index = () => {
     loadStations();
   }, []);
 
+  const sha256Hex = async (text: string): Promise<string> => {
+    const enc = new TextEncoder();
+    const bytes = enc.encode(text);
+    const digest = await crypto.subtle.digest('SHA-256', bytes);
+    return Array.from(new Uint8Array(digest))
+      .map((b) => b.toString(16).padStart(2, '0'))
+      .join('');
+  };
+
+  const unlockAdmin = async () => {
+    if (!adminUnlockHash) {
+      setAdminUnlockError('Admin unlock is not configured for this deployment.');
+      return;
+    }
+    if (!adminUnlockCode.trim()) {
+      setAdminUnlockError('Enter the admin unlock code.');
+      return;
+    }
+    if (!globalThis.crypto?.subtle) {
+      setAdminUnlockError('This browser does not support secure hashing (WebCrypto).');
+      return;
+    }
+    setAdminUnlockBusy(true);
+    setAdminUnlockError(null);
+    try {
+      const got = (await sha256Hex(adminUnlockCode.trim())).toLowerCase();
+      if (got !== adminUnlockHash) {
+        setAdminUnlockError('Invalid unlock code.');
+        return;
+      }
+      setAdminUnlocked(true);
+      setAdminUnlockCode('');
+      toast.success('Admin unlocked', { description: 'Admin tools are enabled on this device.' });
+    } catch {
+      setAdminUnlockError('Failed to verify unlock code.');
+    } finally {
+      setAdminUnlockBusy(false);
+    }
+  };
+
   useEffect(() => {
     const refresh = () => {
       setPendingSuggestions(listPendingSuggestions());
@@ -131,43 +180,29 @@ const Index = () => {
   }, []);
 
   useEffect(() => {
-    // Admin can import a user submission via a link: ?importSuggestion=...
+    // Import a user submission via a link: ?importSuggestion=...
+    // NOTE: This is a *local* import into this browser's storage.
     try {
       const url = new URL(window.location.href);
       const payload = url.searchParams.get('importSuggestion');
       if (!payload) return;
-      const autoApprove = url.searchParams.get('autoApprove') === '1';
       const imported = importSuggestionFromUrlParam(payload);
       if (imported) {
-        if (isAdmin && autoApprove) {
-          const approved = approveSuggestion(imported.id);
-          if (approved) {
-            setStations((prev) => {
-              const id = `user/${approved.id}`;
-              if (prev.some((x) => x.id === id)) return prev;
-              return [...prev, suggestionToChargingStation(approved)];
-            });
-            setPendingSuggestions(listPendingSuggestions());
-            setApprovedSuggestions(listApprovedSuggestions());
-            toast.success('Approved & added to map', {
-              description: 'Shown as “User suggested (unverified)”. To publish for everyone, update public/user-stations.json.'
-            });
-          } else {
-            toast.success('Suggestion imported', { description: 'It is now pending admin approval.' });
-          }
-        } else {
-          toast.success('Suggestion imported', { description: 'It is now pending admin approval.' });
-        }
+        setPendingSuggestions(listPendingSuggestions());
+        setApprovedSuggestions(listApprovedSuggestions());
+        toast.success('Suggestion imported', { description: 'It is now pending admin review.' });
       } else {
         toast.error('Invalid suggestion link');
       }
       url.searchParams.delete('importSuggestion');
+      // Ignore legacy params from older links.
       url.searchParams.delete('autoApprove');
+      url.searchParams.delete('admin');
       window.history.replaceState({}, '', url.pathname + (url.searchParams.toString() ? `?${url.searchParams}` : ''));
     } catch {
       // ignore
     }
-  }, [isAdmin]);
+  }, []);
 
   useEffect(() => {
     const refresh = () => {
@@ -627,20 +662,59 @@ const Index = () => {
                 </div>
               )}
 
-              {isAdmin ? (
+              {adminUnlockHash ? (
                 <div className="mb-6 rounded-xl border bg-background p-4 shadow-soft">
                   <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
                     <div>
                       <p className="text-xs text-muted-foreground">Admin</p>
                       <p className="font-medium">User-submitted station suggestions</p>
-                      <p className="text-xs text-muted-foreground">
-                        Pending: {pendingSuggestions.length} · Approved: {approvedSuggestions.length}
-                      </p>
+                      {adminUnlocked ? (
+                        <p className="text-xs text-muted-foreground">
+                          Pending: {pendingSuggestions.length} · Approved: {approvedSuggestions.length}
+                        </p>
+                      ) : (
+                        <p className="text-xs text-muted-foreground">Locked</p>
+                      )}
                     </div>
-                    <div className="text-xs text-muted-foreground">
-                      Tip: open submission links with <code>?admin=1</code> to review & approve.
+                    <div className="flex items-center gap-2">
+                      {adminUnlocked ? (
+                        <Button size="sm" variant="outline" onClick={() => setAdminUnlocked(false)}>
+                          Lock
+                        </Button>
+                      ) : (
+                        <Button size="sm" variant="secondary" onClick={unlockAdmin} disabled={adminUnlockBusy}>
+                          {adminUnlockBusy ? 'Unlocking…' : 'Unlock'}
+                        </Button>
+                      )}
                     </div>
                   </div>
+
+                  {!adminUnlocked ? (
+                    <div className="mt-3 rounded-xl border bg-muted/20 p-3">
+                      <p className="text-sm font-medium">Enter admin unlock code</p>
+                      <div className="mt-2 flex flex-col sm:flex-row gap-2">
+                        <Input
+                          type="password"
+                          value={adminUnlockCode}
+                          placeholder="Admin unlock code"
+                          onChange={(e) => setAdminUnlockCode(e.target.value)}
+                          onKeyDown={(e) => {
+                            if (e.key === 'Enter') unlockAdmin();
+                          }}
+                        />
+                        <Button variant="secondary" onClick={unlockAdmin} disabled={adminUnlockBusy}>
+                          {adminUnlockBusy ? 'Unlocking…' : 'Unlock'}
+                        </Button>
+                      </div>
+                      {adminUnlockError ? (
+                        <p className="mt-2 text-xs text-destructive">{adminUnlockError}</p>
+                      ) : (
+                        <p className="mt-2 text-xs text-muted-foreground">
+                          This protects admin tools from being enabled via a URL param.
+                        </p>
+                      )}
+                    </div>
+                  ) : null}
 
                   <div className="mt-3 rounded-xl border bg-muted/20 p-3">
                     <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
@@ -655,10 +729,11 @@ const Index = () => {
                         <Button
                           size="sm"
                           variant="secondary"
+                          disabled={!adminUnlocked}
                           onClick={async () => {
                             const merged = uniqBy(
                               [...globalApprovedSuggestions, ...approvedSuggestions],
-                              (s) => String(s.id ?? '')
+                              suggestionKey
                             );
                             const file = buildGlobalUserStationsFile(merged);
                             const text = JSON.stringify(file, null, 2) + '\n';
@@ -680,10 +755,11 @@ const Index = () => {
                         <Button
                           size="sm"
                           variant="outline"
+                          disabled={!adminUnlocked}
                           onClick={() => {
                             const merged = uniqBy(
                               [...globalApprovedSuggestions, ...approvedSuggestions],
-                              (s) => String(s.id ?? '')
+                              suggestionKey
                             );
                             const file = buildGlobalUserStationsFile(merged);
                             const text = JSON.stringify(file, null, 2) + '\n';
@@ -701,7 +777,7 @@ const Index = () => {
                     </p>
                   </div>
 
-                  {pendingSuggestions.length ? (
+                  {adminUnlocked && pendingSuggestions.length ? (
                     <div className="mt-3 space-y-2">
                       {pendingSuggestions.slice(0, 12).map((s) => (
                         <div
@@ -753,11 +829,11 @@ const Index = () => {
                         <div className="text-xs text-muted-foreground">Showing first 12 pending suggestions.</div>
                       ) : null}
                     </div>
-                  ) : (
+                  ) : adminUnlocked ? (
                     <div className="mt-3 text-sm text-muted-foreground">No pending suggestions.</div>
-                  )}
+                  ) : null}
 
-                  {approvedSuggestions.length ? (
+                  {adminUnlocked && approvedSuggestions.length ? (
                     <div className="mt-4">
                       <p className="text-xs font-medium text-muted-foreground mb-2">Approved (local)</p>
                       <div className="grid gap-2 md:grid-cols-2">

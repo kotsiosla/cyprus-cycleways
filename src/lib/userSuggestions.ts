@@ -70,20 +70,6 @@ export function addPendingSuggestion(input: Omit<StationSuggestion, "id" | "crea
   return suggestion;
 }
 
-export function addPendingSuggestionWithMeta(
-  input: Omit<StationSuggestion, "id" | "createdAt">,
-  meta?: Partial<Pick<StationSuggestion, "id" | "createdAt">>
-): StationSuggestion {
-  const store = readStore();
-  const id = typeof meta?.id === "string" && meta.id ? meta.id : genId();
-  const createdAt = typeof meta?.createdAt === "number" && Number.isFinite(meta.createdAt) ? meta.createdAt : Date.now();
-  const suggestion: StationSuggestion = { ...input, id, createdAt };
-  store.pending.push(suggestion);
-  store.pending = store.pending.slice(-500);
-  writeStore(store);
-  return suggestion;
-}
-
 export function approveSuggestion(id: string) {
   const store = readStore();
   const idx = store.pending.findIndex((s) => s.id === id);
@@ -142,43 +128,89 @@ function fromBase64Url(b64url: string) {
 }
 
 export function makeSuggestionShareUrl(s: StationSuggestion, baseUrl?: string): string {
-  const payload = toBase64Url(JSON.stringify({ v: 1, suggestion: s }));
+  // IMPORTANT: Do not embed sensitive/untrusted fields in URLs.
+  // - URLs leak via browser history, logs, screenshots, link previews, etc.
+  // - Query params can also leak via referrers if not locked down.
+  // Keep payload minimal and do not include photo/notes.
+  const shareable = {
+    v: 1,
+    suggestion: {
+      coordinates: s.coordinates,
+      name: s.name,
+      city: s.city,
+      address: s.address,
+      connectors: s.connectors,
+      powerKw: s.powerKw
+    }
+  };
+  const payload = toBase64Url(JSON.stringify(shareable));
   const origin = baseUrl ?? (typeof window !== "undefined" ? window.location.origin + window.location.pathname : "");
-  return `${origin}?admin=1&importSuggestion=${payload}`;
+  return `${origin}?importSuggestion=${payload}`;
 }
 
 export function makeSuggestionApprovalUrl(s: StationSuggestion, baseUrl?: string): string {
-  const payload = toBase64Url(JSON.stringify({ v: 1, suggestion: s }));
+  // Same as share URL, but named to match admin workflow.
+  // Admin approval is an *in-app action* and must not be controlled by URL params.
+  const shareable = {
+    v: 1,
+    suggestion: {
+      coordinates: s.coordinates,
+      name: s.name,
+      city: s.city,
+      address: s.address,
+      connectors: s.connectors,
+      powerKw: s.powerKw
+    }
+  };
+  const payload = toBase64Url(JSON.stringify(shareable));
   const origin = baseUrl ?? (typeof window !== "undefined" ? window.location.origin + window.location.pathname : "");
-  // Admin-only link that auto-approves on open.
-  return `${origin}?admin=1&autoApprove=1&importSuggestion=${payload}`;
+  return `${origin}?importSuggestion=${payload}`;
 }
 
 export function importSuggestionFromUrlParam(payload: string): StationSuggestion | null {
   try {
     const decoded = fromBase64Url(payload);
-    const parsed = JSON.parse(decoded) as { v?: number; suggestion?: StationSuggestion };
+    const parsed = JSON.parse(decoded) as { v?: number; suggestion?: unknown };
     const suggestion = parsed?.suggestion;
     if (!suggestion || typeof suggestion !== "object") return null;
-    if (!Array.isArray(suggestion.coordinates) || suggestion.coordinates.length < 2) return null;
+    const s = suggestion as Record<string, unknown>;
+    const coords = s.coordinates;
+    if (!Array.isArray(coords) || coords.length < 2) return null;
+    const lon = Number(coords[0]);
+    const lat = Number(coords[1]);
+    if (!Number.isFinite(lon) || !Number.isFinite(lat)) return null;
+    if (lon < -180 || lon > 180 || lat < -90 || lat > 90) return null;
+
+    const clamp = (value: string, max: number) => (value.length > max ? value.slice(0, max) : value);
+    const nameRaw = typeof s.name === "string" ? s.name : "User suggested station";
+    const name = clamp(nameRaw.trim() || "User suggested station", 120);
+
+    const city = typeof s.city === "string" ? clamp(s.city.trim(), 80) : undefined;
+    const address = typeof s.address === "string" ? clamp(s.address.trim(), 200) : undefined;
+
+    const allowedConnectors: SuggestedConnector[] = ["CCS", "Type 2", "CHAdeMO", "Schuko", "Type 1", "Tesla"];
+    const allowedSet = new Set<string>(allowedConnectors);
+    const connectorsRaw = Array.isArray(s.connectors) ? s.connectors : [];
+    const connectors = connectorsRaw
+      .filter((c): c is string => typeof c === "string" && allowedSet.has(c))
+      .slice(0, 10) as SuggestedConnector[];
+
+    const powerKwRaw = typeof s.powerKw === "number" ? s.powerKw : undefined;
+    const powerKw =
+      typeof powerKwRaw === "number" && Number.isFinite(powerKwRaw) && powerKwRaw > 0 && powerKwRaw <= 1000
+        ? powerKwRaw
+        : undefined;
+
+    // Never import photo/notes from URLs (risk: XSS, PII leakage, huge URLs).
     const normalized: Omit<StationSuggestion, "id" | "createdAt"> = {
-      coordinates: [Number(suggestion.coordinates[0]), Number(suggestion.coordinates[1])],
-      name: String(suggestion.name ?? "User suggested station"),
-      city: suggestion.city ? String(suggestion.city) : undefined,
-      address: suggestion.address ? String(suggestion.address) : undefined,
-      connectors: Array.isArray(suggestion.connectors) ? (suggestion.connectors as SuggestedConnector[]) : [],
-      powerKw: typeof suggestion.powerKw === "number" ? suggestion.powerKw : undefined,
-      notes: suggestion.notes ? String(suggestion.notes) : undefined,
-      photoDataUrl: suggestion.photoDataUrl && String(suggestion.photoDataUrl).startsWith("data:")
-        ? String(suggestion.photoDataUrl)
-        : undefined
+      coordinates: [lon, lat],
+      name,
+      city: city || undefined,
+      address: address || undefined,
+      connectors,
+      powerKw
     };
-    // Keep incoming id/timestamp when provided so admins can dedupe/publish globally.
-    const meta: Partial<Pick<StationSuggestion, "id" | "createdAt">> = {
-      id: typeof suggestion.id === "string" ? suggestion.id : undefined,
-      createdAt: typeof suggestion.createdAt === "number" ? suggestion.createdAt : undefined
-    };
-    return addPendingSuggestionWithMeta(normalized, meta);
+    return addPendingSuggestion(normalized);
   } catch {
     return null;
   }
